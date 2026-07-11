@@ -29,6 +29,10 @@ export default function DaymarkClient({ user }: { user: User }) {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskTime, setTaskTime] = useState("09:00");
   const [priority, setPriority] = useState<Task["priority"]>("medium");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editTime, setEditTime] = useState("09:00");
+  const [editPriority, setEditPriority] = useState<Task["priority"]>("medium");
   const [journal, setJournal] = useState("");
   const [mood, setMood] = useState(4);
   const [energy, setEnergy] = useState(3);
@@ -84,6 +88,33 @@ export default function DaymarkClient({ user }: { user: User }) {
     persist("deleteTask", { id });
   }
 
+  function startEdit(task: Task) {
+    setEditingId(task.id); setEditTitle(task.title); setEditTime(task.dueTime); setEditPriority(task.priority);
+  }
+
+  function saveTaskEdit(task: Task) {
+    if (!editTitle.trim()) return;
+    const next = { ...task, title: editTitle.trim(), dueTime: editTime, priority: editPriority };
+    setData(current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? next : item) }));
+    persist("upsertTask", next); setEditingId(null);
+  }
+
+  function closeDay() {
+    const unfinished = dayTasks.filter(task => !task.completed);
+    const tomorrow = new Date(new Date(`${selectedDate}T12:00:00`).getTime() + 86400000).toISOString().slice(0, 10);
+    const moved = unfinished.map(task => ({ ...task, dueDate: tomorrow }));
+    const movedIds = new Set(moved.map(task => task.id));
+    setData(current => ({ ...current, tasks: current.tasks.map(task => movedIds.has(task.id) ? moved.find(item => item.id === task.id)! : task) }));
+    moved.forEach(task => persist("upsertTask", task));
+    const closure = `Day closed — ${complete} completed${unfinished.length ? `, ${unfinished.length} carried forward` : ""}.`;
+    const content = journal.trim() ? `${journal.trim()}\n\n${closure}` : closure;
+    const entry: Entry = { id: dayEntry?.id ?? uid(), entryDate: selectedDate, content, mood, energy, updatedAt: new Date().toISOString() };
+    setJournal(content);
+    setData(current => ({ ...current, entries: [...current.entries.filter(item => item.entryDate !== selectedDate), entry] }));
+    persist("upsertEntry", entry);
+    setStatus("Day closed gently");
+  }
+
   function saveJournal() {
     if (!journal.trim()) return;
     const entry: Entry = { id: dayEntry?.id ?? uid(), entryDate: selectedDate, content: journal.trim(), mood, energy, updatedAt: new Date().toISOString() };
@@ -126,11 +157,12 @@ export default function DaymarkClient({ user }: { user: User }) {
             <div className="main-column">
               <section className="page-card tasks-card">
                 <div className="section-heading"><div><span className="kicker">TODAY’S INTENTIONS</span><h2>Things to tend to</h2></div><div className="progress-ring" style={{"--progress": `${progress * 3.6}deg`} as React.CSSProperties}><span>{progress}%</span></div></div>
-                <div className="task-list">{dayTasks.length ? dayTasks.map(task => <article className={`task ${task.completed ? "done" : ""}`} key={task.id}><button className="check" onClick={() => toggleTask(task)} aria-label={`${task.completed ? "Reopen" : "Complete"} ${task.title}`}>{task.completed ? "✓" : ""}</button><div><strong>{task.title}</strong><span><time>{task.dueTime}</time> · <em className={task.priority}>{task.priority}</em></span></div><button className="delete" onClick={() => deleteTask(task.id)} aria-label={`Delete ${task.title}`}>×</button></article>) : <Empty text="Nothing is asking for your attention yet." />}</div>
+                <div className="task-list">{dayTasks.length ? dayTasks.map(task => editingId === task.id ? <form className="task edit-task" key={task.id} onSubmit={event => { event.preventDefault(); saveTaskEdit(task); }}><span className="edit-mark">✎</span><div className="edit-fields"><input autoFocus aria-label="Edit task title" value={editTitle} onChange={e => setEditTitle(e.target.value)} /><div><input aria-label="Edit task time" type="time" value={editTime} onChange={e => setEditTime(e.target.value)} /><select aria-label="Edit task priority" value={editPriority} onChange={e => setEditPriority(e.target.value as Task["priority"])}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div></div><div className="task-actions"><button className="save-mini" type="submit" aria-label="Save task changes">✓</button><button className="delete" type="button" onClick={() => setEditingId(null)} aria-label="Cancel editing">×</button></div></form> : <article className={`task ${task.completed ? "done" : ""}`} key={task.id}><button className="check" onClick={() => toggleTask(task)} aria-label={`${task.completed ? "Reopen" : "Complete"} ${task.title}`}>{task.completed ? "✓" : ""}</button><div><strong>{task.title}</strong><span><time>{task.dueTime}</time> · <em className={task.priority}>{task.priority}</em></span></div><div className="task-actions"><button className="edit" onClick={() => startEdit(task)} aria-label={`Edit ${task.title}`}>✎</button><button className="delete" onClick={() => deleteTask(task.id)} aria-label={`Delete ${task.title}`}>×</button></div></article>) : <Empty text="Nothing is asking for your attention yet." />}</div>
                 {showTaskForm ? <form className="task-form" onSubmit={addTask}><input autoFocus aria-label="Task title" value={taskTitle} onChange={e => setTaskTitle(e.target.value)} placeholder="What needs your attention?" /><input aria-label="Due time" type="time" value={taskTime} onChange={e => setTaskTime(e.target.value)} /><select aria-label="Priority" value={priority} onChange={e => setPriority(e.target.value as Task["priority"])}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><button type="submit" className="primary">Add</button><button type="button" onClick={() => setShowTaskForm(false)}>Cancel</button></form> : <button className="add-row" onClick={() => setShowTaskForm(true)}>＋ Add an intention</button>}
               </section>
 
               <section className="page-card rhythm-card"><div className="section-heading"><div><span className="kicker">A GENTLE RHYTHM</span><h2>Today, at a glance</h2></div><span>{complete} of {dayTasks.length} complete</span></div><div className="rhythm-track">{dayTasks.map(task => <div key={task.id} className={task.completed ? "complete" : ""}><span></span><time>{task.dueTime}</time><small>{task.title}</small></div>)}</div></section>
+              <section className="page-card closure-card"><div><span className="kicker">THE DAYMARK RITUAL</span><h2>Close the day, not just the list.</h2><p>Daymark writes a closing line into today’s journal and carries unfinished intentions into tomorrow—so nothing quietly disappears.</p></div><div className="closure-stats"><strong>{complete}</strong><span>done</span><strong>{dayTasks.length - complete}</strong><span>to carry</span></div><button className="primary" onClick={closeDay}>Close today & carry forward</button></section>
             </div>
 
             <div className="side-column">
