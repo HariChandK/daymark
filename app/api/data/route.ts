@@ -16,6 +16,7 @@ async function setup() {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS tasks_owner_date_idx ON tasks(owner_email, due_date)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, owner_email TEXT NOT NULL, entry_date TEXT NOT NULL, content TEXT NOT NULL, mood INTEGER NOT NULL, energy INTEGER NOT NULL, updated_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS entries_owner_date_idx ON entries(owner_email, entry_date)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS profiles (owner_email TEXT PRIMARY KEY, display_name TEXT NOT NULL, updated_at TEXT NOT NULL)"),
   ]);
 }
 
@@ -23,11 +24,12 @@ export async function GET() {
   const owner = await email();
   if (!owner) return Response.json({ error: "Unauthorized" }, { status: 401 });
   await setup();
-  const [taskRows, entryRows] = await Promise.all([
+  const [taskRows, entryRows, profileRow] = await Promise.all([
     env.DB.prepare("SELECT id, title, due_date as dueDate, due_time as dueTime, priority, completed FROM tasks WHERE owner_email = ? ORDER BY due_date, due_time").bind(owner).all(),
     env.DB.prepare("SELECT id, entry_date as entryDate, content, mood, energy, updated_at as updatedAt FROM entries WHERE owner_email = ? ORDER BY entry_date DESC").bind(owner).all(),
+    env.DB.prepare("SELECT display_name as displayName FROM profiles WHERE owner_email = ?").bind(owner).first(),
   ]);
-  return Response.json({ tasks: taskRows.results.map((row: Record<string, unknown>) => ({ ...row, completed: Boolean(row.completed) })), entries: entryRows.results });
+  return Response.json({ tasks: taskRows.results.map((row: Record<string, unknown>) => ({ ...row, completed: Boolean(row.completed) })), entries: entryRows.results, profile: profileRow ?? null });
 }
 
 export async function POST(request: Request) {
@@ -39,6 +41,7 @@ export async function POST(request: Request) {
   else if (action === "deleteTask") await env.DB.prepare("DELETE FROM tasks WHERE id = ? AND owner_email = ?").bind(payload.id, owner).run();
   else if (action === "upsertEntry") await env.DB.prepare("INSERT INTO entries (id, owner_email, entry_date, content, mood, energy, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_email, entry_date) DO UPDATE SET content=excluded.content, mood=excluded.mood, energy=excluded.energy, updated_at=excluded.updated_at").bind(payload.id, owner, payload.entryDate, payload.content, payload.mood, payload.energy, payload.updatedAt).run();
   else if (action === "deleteEntry") await env.DB.prepare("DELETE FROM entries WHERE id = ? AND owner_email = ?").bind(payload.id, owner).run();
+  else if (action === "upsertProfile") await env.DB.prepare("INSERT INTO profiles (owner_email, display_name, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner_email) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at").bind(owner, payload.displayName, new Date().toISOString()).run();
   else return Response.json({ error: "Unknown action" }, { status: 400 });
   return Response.json({ ok: true });
 }

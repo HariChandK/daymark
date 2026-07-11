@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type User = { displayName: string; email: string; fullName: string | null };
 type Task = { id: string; title: string; dueDate: string; dueTime: string; priority: "low" | "medium" | "high"; completed: boolean };
 type Entry = { id: string; entryDate: string; content: string; mood: number; energy: number; updatedAt: string };
-type Data = { tasks: Task[]; entries: Entry[] };
+type Data = { tasks: Task[]; entries: Entry[]; profile?: { displayName: string } | null };
 
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const starter: Data = {
@@ -37,15 +37,20 @@ export default function DaymarkClient({ user }: { user: User }) {
   const [mood, setMood] = useState(4);
   const [energy, setEnergy] = useState(3);
   const [status, setStatus] = useState("Syncing your day…");
+  const [profileName, setProfileName] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
+  const [onboarding, setOnboarding] = useState<"loading" | "open" | "done">("loading");
 
   useEffect(() => {
     fetch("/api/data").then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
       if (saved.tasks.length || saved.entries.length) setData(saved);
+      if (saved.profile?.displayName) { setProfileName(saved.profile.displayName); setOnboarding("done"); }
+      else { setNameDraft(user.fullName?.split(" ")[0] ?? ""); setOnboarding("open"); }
       const savedToday = saved.entries.find(entry => entry.entryDate === selectedDate);
       if (savedToday) { setJournal(savedToday.content); setMood(savedToday.mood); setEnergy(savedToday.energy); }
       setStatus("Synced");
-    }).catch(() => setStatus("Local preview"));
-  }, [selectedDate]);
+    }).catch(() => { setProfileName(user.fullName?.split(" ")[0] ?? user.displayName); setOnboarding("done"); setStatus("Local preview"); });
+  }, [selectedDate, user.displayName, user.fullName]);
 
   const dayEntry = data.entries.find(entry => entry.entryDate === selectedDate);
 
@@ -128,7 +133,15 @@ export default function DaymarkClient({ user }: { user: User }) {
     setJournal(""); persist("deleteEntry", { id: dayEntry.id });
   }
 
-  const name = (user.fullName ?? user.displayName).split(" ")[0];
+  async function saveName(event: FormEvent) {
+    event.preventDefault();
+    const cleanName = nameDraft.trim().slice(0, 40);
+    if (!cleanName) return;
+    setProfileName(cleanName); setOnboarding("done");
+    await persist("upsertProfile", { displayName: cleanName });
+  }
+
+  const name = profileName || (user.fullName ?? user.displayName).split(" ")[0];
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -175,6 +188,7 @@ export default function DaymarkClient({ user }: { user: User }) {
       </section>
 
       <nav className="mobile-nav" aria-label="Mobile navigation"><button className={view === "today" ? "active" : ""} onClick={() => setView("today")}><span>⌂</span>Today</button><button className={view === "timeline" ? "active" : ""} onClick={() => setView("timeline")}><span>◷</span>Timeline</button><button className={view === "journal" ? "active" : ""} onClick={() => setView("journal")}><span>✎</span>Journal</button></nav>
+      {onboarding === "open" && <div className="welcome-overlay" role="dialog" aria-modal="true" aria-labelledby="welcome-title"><form className="welcome-card" onSubmit={saveName}><span className="welcome-mark">D</span><span className="kicker">WELCOME TO DAYMARK</span><h2 id="welcome-title">What should we call you?</h2><p>This name is only used to make your private space feel like yours. You can use your first name, nickname, or anything you like.</p><label htmlFor="display-name">Your name</label><input id="display-name" autoFocus value={nameDraft} onChange={event => setNameDraft(event.target.value)} placeholder="e.g. Hari" maxLength={40} required /><button className="primary" type="submit">Enter my Daymark</button><small>Signed in as {user.email}</small></form></div>}
     </main>
   );
 }
