@@ -8,11 +8,11 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   return {
-    title: "Daymark — Plan the day. Remember the life.",
-    description: "A private daily planner and journal for tasks, timelines, moods, and memories.",
+    title: "Daymark | Understand your days",
+    description: "A private place to notice where your time went, what mattered, and what you want to remember.",
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-    openGraph: { title: "Daymark", description: "Plan the day. Remember the life.", type: "website", images: [{ url: `${origin}/og.jpg`, width: 1736, height: 907, alt: "Daymark — Plan the day. Remember the life." }] },
-    twitter: { card: "summary_large_image", title: "Daymark", description: "Plan the day. Remember the life.", images: [`${origin}/og.jpg`] },
+    openGraph: { title: "Daymark", description: "The days pass quickly. Daymark helps you remember how you lived them.", type: "website", images: [{ url: `${origin}/og.jpg`, width: 1736, height: 907, alt: "Daymark. Your days, held gently." }] },
+    twitter: { card: "summary_large_image", title: "Daymark", description: "The days pass quickly. Daymark helps you remember how you lived them.", images: [`${origin}/og.jpg`] },
   };
 }
 

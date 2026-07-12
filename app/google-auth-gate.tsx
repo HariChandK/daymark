@@ -122,25 +122,25 @@ export default function GoogleAuthGate() {
       <section className="auth-intro">
         <span className="auth-mark">D</span>
         <span className="kicker">YOUR DAYS, HELD GENTLY</span>
-        <h1>Plan the day.<br />Remember the life.</h1>
+        <h1>The days pass quickly.</h1>
         <p>
-          A private home for your intentions, timelines, reflections, mood,
-          and the small moments worth keeping.
+          Daymark helps you remember how you lived them.
+          <span className="auth-purpose">A quiet place to notice where your time went, what mattered, and what you want to remember.</span>
         </p>
         <button className="google-button" onClick={signIn}>
           <span aria-hidden="true">G</span>
           Continue with Google
         </button>
         {error && <small className="auth-error">{error}</small>}
-        <small>Your entries are private and only visible after you sign in.</small>
+        <small>Your entries are private. Only you can see them.</small>
       </section>
       <aside className="auth-preview" aria-label="A preview of Daymark">
         <span className="kicker">TODAY’S INTENTIONS</span>
-        <h2>Make room for what matters.</h2>
-        <div><i>✓</i><span><strong>Shape the week ahead</strong><small>09:30 · high</small></span></div>
-        <div><i></i><span><strong>Take a quiet lunch break</strong><small>12:30 · medium</small></span></div>
-        <div><i></i><span><strong>Write three lines about today</strong><small>20:00 · low</small></span></div>
-        <blockquote>“Small steps, honestly remembered, become a life.”</blockquote>
+        <h2>What deserves your attention today?</h2>
+        <div><i>✓</i><span><strong>Call Amma</strong><small>09:30 · high</small></span></div>
+        <div><i></i><span><strong>Finish the feature I&apos;ve been avoiding</strong><small>12:30 · medium</small></span></div>
+        <div><i></i><span><strong>Sit outside for ten minutes</strong><small>20:00 · low</small></span></div>
+        <blockquote>“Most days ask for nothing extraordinary. They&apos;re still worth remembering.”</blockquote>
       </aside>
     </main>
   );
