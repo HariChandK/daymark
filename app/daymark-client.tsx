@@ -22,6 +22,9 @@ function dateLabel(date: string) { return new Date(`${date}T12:00:00`).toLocaleD
 function fullDate(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
 
 export default function DaymarkClient({ user, accessToken, onSignOut }: { user: User; accessToken: string; onSignOut: () => void }) {
+  const dataApiUrl = typeof window !== "undefined" && window.location.hostname.endsWith("pages.dev")
+    ? "https://daymark-daily-journal.harichankona.chatgpt.site/api/data"
+    : "/api/data";
   const [data, setData] = useState<Data>(starter);
   const [selectedDate, setSelectedDate] = useState(today);
   const [view, setView] = useState<"today" | "timeline" | "journal">("today");
@@ -42,7 +45,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
   const [onboarding, setOnboarding] = useState<"loading" | "open" | "done">("loading");
 
   useEffect(() => {
-    fetch("/api/data", { headers: { authorization: `Bearer ${accessToken}` } }).then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
+    fetch(dataApiUrl, { headers: { authorization: `Bearer ${accessToken}` } }).then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
       if (saved.tasks.length || saved.entries.length) setData(saved);
       if (saved.profile?.displayName) { setProfileName(saved.profile.displayName); setOnboarding("done"); }
       else { setNameDraft(user.fullName?.split(" ")[0] ?? ""); setOnboarding("open"); }
@@ -50,7 +53,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
       if (savedToday) { setJournal(savedToday.content); setMood(savedToday.mood); setEnergy(savedToday.energy); }
       setStatus("Synced");
     }).catch(() => { setProfileName(user.fullName?.split(" ")[0] ?? user.displayName); setOnboarding("done"); setStatus("Local preview"); });
-  }, [accessToken, selectedDate, user.displayName, user.fullName]);
+  }, [accessToken, dataApiUrl, selectedDate, user.displayName, user.fullName]);
 
   const dayEntry = data.entries.find(entry => entry.entryDate === selectedDate);
 
@@ -67,7 +70,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
   async function persist(action: string, payload: unknown) {
     setStatus("Saving…");
     try {
-      const res = await fetch("/api/data", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ action, payload }) });
+      const res = await fetch(dataApiUrl, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ action, payload }) });
       if (!res.ok) throw new Error();
       setStatus("Saved");
     } catch { setStatus("Saved in preview"); }

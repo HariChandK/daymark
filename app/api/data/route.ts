@@ -3,6 +3,30 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../../supabase-auth";
 
 export const dynamic = "force-dynamic";
 
+const allowedOrigins = new Set([
+  "https://daymark-daily.pages.dev",
+  "https://daymark-daily-journal.pages.dev",
+  "https://daymark-daily-journal.harichankona.chatgpt.site",
+]);
+
+function corsHeaders(request: Request) {
+  const origin = request.headers.get("origin");
+  return {
+    "access-control-allow-origin": origin && allowedOrigins.has(origin) ? origin : "https://daymark-daily.pages.dev",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    vary: "Origin",
+  };
+}
+
+function json(request: Request, body: unknown, status = 200) {
+  return Response.json(body, { status, headers: corsHeaders(request) });
+}
+
+export async function OPTIONS(request: Request) {
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
+}
+
 async function email(request: Request) {
   const authorization = request.headers.get("authorization");
   if (authorization?.startsWith("Bearer ")) {
@@ -33,19 +57,19 @@ async function setup() {
 
 export async function GET(request: Request) {
   const owner = await email(request);
-  if (!owner) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!owner) return json(request, { error: "Unauthorized" }, 401);
   await setup();
   const [taskRows, entryRows, profileRow] = await Promise.all([
     env.DB.prepare("SELECT id, title, due_date as dueDate, due_time as dueTime, priority, completed FROM tasks WHERE owner_email = ? ORDER BY due_date, due_time").bind(owner).all(),
     env.DB.prepare("SELECT id, entry_date as entryDate, content, mood, energy, updated_at as updatedAt FROM entries WHERE owner_email = ? ORDER BY entry_date DESC").bind(owner).all(),
     env.DB.prepare("SELECT display_name as displayName FROM profiles WHERE owner_email = ?").bind(owner).first(),
   ]);
-  return Response.json({ tasks: taskRows.results.map((row: Record<string, unknown>) => ({ ...row, completed: Boolean(row.completed) })), entries: entryRows.results, profile: profileRow ?? null });
+  return json(request, { tasks: taskRows.results.map((row: Record<string, unknown>) => ({ ...row, completed: Boolean(row.completed) })), entries: entryRows.results, profile: profileRow ?? null });
 }
 
 export async function POST(request: Request) {
   const owner = await email(request);
-  if (!owner) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!owner) return json(request, { error: "Unauthorized" }, 401);
   await setup();
   const { action, payload } = await request.json() as { action: string; payload: Record<string, unknown> };
   if (action === "upsertTask") await env.DB.prepare("INSERT INTO tasks (id, owner_email, title, due_date, due_time, priority, completed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, due_date=excluded.due_date, due_time=excluded.due_time, priority=excluded.priority, completed=excluded.completed, updated_at=excluded.updated_at WHERE owner_email = excluded.owner_email").bind(payload.id, owner, payload.title, payload.dueDate, payload.dueTime, payload.priority, payload.completed ? 1 : 0, new Date().toISOString()).run();
@@ -53,6 +77,6 @@ export async function POST(request: Request) {
   else if (action === "upsertEntry") await env.DB.prepare("INSERT INTO entries (id, owner_email, entry_date, content, mood, energy, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_email, entry_date) DO UPDATE SET content=excluded.content, mood=excluded.mood, energy=excluded.energy, updated_at=excluded.updated_at").bind(payload.id, owner, payload.entryDate, payload.content, payload.mood, payload.energy, payload.updatedAt).run();
   else if (action === "deleteEntry") await env.DB.prepare("DELETE FROM entries WHERE id = ? AND owner_email = ?").bind(payload.id, owner).run();
   else if (action === "upsertProfile") await env.DB.prepare("INSERT INTO profiles (owner_email, display_name, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner_email) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at").bind(owner, payload.displayName, new Date().toISOString()).run();
-  else return Response.json({ error: "Unknown action" }, { status: 400 });
-  return Response.json({ ok: true });
+  else return json(request, { error: "Unknown action" }, 400);
+  return json(request, { ok: true });
 }

@@ -25,5 +25,5 @@ test("protects API data with the verified Supabase user", async () => {
   assert.match(api, /\/auth\/v1\/user/);
   assert.match(api, /authorization/);
   assert.match(api, /WHERE owner_email = \?/);
-  assert.match(api, /status: 401/);
+  assert.match(api, /Unauthorized[\s\S]*401/);
 });
