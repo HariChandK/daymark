@@ -21,7 +21,7 @@ function uid() { return crypto.randomUUID(); }
 function dateLabel(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 function fullDate(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
 
-export default function DaymarkClient({ user }: { user: User }) {
+export default function DaymarkClient({ user, accessToken, onSignOut }: { user: User; accessToken: string; onSignOut: () => void }) {
   const [data, setData] = useState<Data>(starter);
   const [selectedDate, setSelectedDate] = useState(today);
   const [view, setView] = useState<"today" | "timeline" | "journal">("today");
@@ -42,7 +42,7 @@ export default function DaymarkClient({ user }: { user: User }) {
   const [onboarding, setOnboarding] = useState<"loading" | "open" | "done">("loading");
 
   useEffect(() => {
-    fetch("/api/data").then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
+    fetch("/api/data", { headers: { authorization: `Bearer ${accessToken}` } }).then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
       if (saved.tasks.length || saved.entries.length) setData(saved);
       if (saved.profile?.displayName) { setProfileName(saved.profile.displayName); setOnboarding("done"); }
       else { setNameDraft(user.fullName?.split(" ")[0] ?? ""); setOnboarding("open"); }
@@ -50,7 +50,7 @@ export default function DaymarkClient({ user }: { user: User }) {
       if (savedToday) { setJournal(savedToday.content); setMood(savedToday.mood); setEnergy(savedToday.energy); }
       setStatus("Synced");
     }).catch(() => { setProfileName(user.fullName?.split(" ")[0] ?? user.displayName); setOnboarding("done"); setStatus("Local preview"); });
-  }, [selectedDate, user.displayName, user.fullName]);
+  }, [accessToken, selectedDate, user.displayName, user.fullName]);
 
   const dayEntry = data.entries.find(entry => entry.entryDate === selectedDate);
 
@@ -67,7 +67,7 @@ export default function DaymarkClient({ user }: { user: User }) {
   async function persist(action: string, payload: unknown) {
     setStatus("Saving…");
     try {
-      const res = await fetch("/api/data", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, payload }) });
+      const res = await fetch("/api/data", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ action, payload }) });
       if (!res.ok) throw new Error();
       setStatus("Saved");
     } catch { setStatus("Saved in preview"); }
@@ -152,7 +152,7 @@ export default function DaymarkClient({ user }: { user: User }) {
           <button className={view === "journal" ? "active" : ""} onClick={() => setView("journal")}><span>✎</span> Journal</button>
         </nav>
         <div className="sidebar-note"><span>“</span><p>Small steps, honestly remembered, become a life.</p></div>
-        <div className="account"><div className="avatar">{name.charAt(0).toUpperCase()}</div><div><strong>{name}</strong><small>{status}</small></div><a href="/signout-with-chatgpt?return_to=%2F" aria-label="Sign out">↗</a></div>
+        <div className="account"><div className="avatar">{name.charAt(0).toUpperCase()}</div><div><strong>{name}</strong><small>{status}</small></div><button className="sign-out" onClick={onSignOut} aria-label="Sign out">↗</button></div>
       </aside>
 
       <section className="workspace">

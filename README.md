@@ -17,19 +17,20 @@ Daymark treats every date as a complete record—not merely a checklist. Its **C
 - Searchable journal history
 - Close-the-day ritual with automatic task carry-forward
 - Responsive phone and desktop layouts
-- Sign in with ChatGPT
+- Sign in with any Google account through Supabase Auth
 - Separate, private data for every signed-in user
 - Cloudflare D1 persistence with Drizzle migrations
 
 ## Privacy model
 
-The website may be publicly accessible, but all personal content requires sign-in. Every database record is associated with the signed-in user's email, and server-side queries enforce that ownership. Source code in this repository contains no diary entries, tasks, credentials, or production user data.
+The website is publicly accessible, but all personal content requires sign-in. Every database record is associated with the verified signed-in user's email, and server-side queries enforce that ownership. Source code in this repository contains no diary entries, tasks, private credentials, or production user data. The Supabase publishable key used by the browser is intentionally public; Google OAuth secrets remain outside GitHub.
 
 ## Technology
 
 - React and Next.js-compatible Vinext
 - TypeScript
 - Cloudflare Workers and D1
+- Supabase Auth and Google OAuth
 - Drizzle ORM
 - Tailwind CSS
 - Sites hosting

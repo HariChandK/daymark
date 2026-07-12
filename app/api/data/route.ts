@@ -1,11 +1,22 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "../../chatgpt-auth";
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../../supabase-auth";
 
 export const dynamic = "force-dynamic";
 
-async function email() {
-  const user = await getChatGPTUser();
-  if (user) return user.email;
+async function email(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        authorization,
+      },
+    });
+    if (response.ok) {
+      const user = (await response.json()) as { email?: string };
+      if (user.email) return user.email;
+    }
+  }
   if (process.env.NODE_ENV !== "production") return "local@daymark.app";
   return null;
 }
@@ -20,8 +31,8 @@ async function setup() {
   ]);
 }
 
-export async function GET() {
-  const owner = await email();
+export async function GET(request: Request) {
+  const owner = await email(request);
   if (!owner) return Response.json({ error: "Unauthorized" }, { status: 401 });
   await setup();
   const [taskRows, entryRows, profileRow] = await Promise.all([
@@ -33,7 +44,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const owner = await email();
+  const owner = await email(request);
   if (!owner) return Response.json({ error: "Unauthorized" }, { status: 401 });
   await setup();
   const { action, payload } = await request.json() as { action: string; payload: Record<string, unknown> };
