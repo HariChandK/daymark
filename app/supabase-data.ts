@@ -1,6 +1,7 @@
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase-auth";
 
-export type DaymarkTask = { id: string; title: string; dueDate: string; dueTime: string; priority: "low" | "medium" | "high"; completed: boolean };
+export type LifeArea = "Work" | "Health" | "Learning" | "Relationships" | "Rest" | "Personal";
+export type DaymarkTask = { id: string; title: string; dueDate: string; dueTime: string; priority: "low" | "medium" | "high"; completed: boolean; area: LifeArea; carriedCount: number };
 export type DaymarkEntry = { id: string; entryDate: string; content: string; mood: number; energy: number; updatedAt: string };
 export type DaymarkData = { tasks: DaymarkTask[]; entries: DaymarkEntry[]; profile?: { displayName: string } | null };
 export type DataBackend = "supabase" | "legacy";
@@ -18,15 +19,15 @@ async function supabaseRequest(accessToken: string, path: string, init?: Request
 
 export async function readSupabaseData(accessToken: string): Promise<DaymarkData> {
   const [tasksResponse, entriesResponse, profileResponse] = await Promise.all([
-    supabaseRequest(accessToken, "tasks?select=id,title,due_date,due_time,priority,completed&order=due_date.asc,due_time.asc"),
+    supabaseRequest(accessToken, "tasks?select=id,title,due_date,due_time,priority,completed,area,carried_count&order=due_date.asc,due_time.asc"),
     supabaseRequest(accessToken, "entries?select=id,entry_date,content,mood,energy,updated_at&order=entry_date.desc"),
     supabaseRequest(accessToken, "profiles?select=display_name&limit=1"),
   ]);
-  const tasks = (await tasksResponse.json()) as Array<{ id: string; title: string; due_date: string; due_time: string; priority: DaymarkTask["priority"]; completed: boolean }>;
+  const tasks = (await tasksResponse.json()) as Array<{ id: string; title: string; due_date: string; due_time: string; priority: DaymarkTask["priority"]; completed: boolean; area: LifeArea; carried_count: number }>;
   const entries = (await entriesResponse.json()) as Array<{ id: string; entry_date: string; content: string; mood: number; energy: number; updated_at: string }>;
   const profiles = (await profileResponse.json()) as Array<{ display_name: string }>;
   return {
-    tasks: tasks.map(task => ({ id: task.id, title: task.title, dueDate: task.due_date, dueTime: task.due_time.slice(0, 5), priority: task.priority, completed: task.completed })),
+    tasks: tasks.map(task => ({ id: task.id, title: task.title, dueDate: task.due_date, dueTime: task.due_time.slice(0, 5), priority: task.priority, completed: task.completed, area: task.area ?? "Personal", carriedCount: task.carried_count ?? 0 })),
     entries: entries.map(entry => ({ id: entry.id, entryDate: entry.entry_date, content: entry.content, mood: entry.mood, energy: entry.energy, updatedAt: entry.updated_at })),
     profile: profiles[0] ? { displayName: profiles[0].display_name } : null,
   };
@@ -35,7 +36,7 @@ export async function readSupabaseData(accessToken: string): Promise<DaymarkData
 export async function writeSupabaseData(accessToken: string, userId: string, action: DataAction, payload: Record<string, unknown>) {
   const jsonHeaders = { "content-type": "application/json", prefer: "resolution=merge-duplicates,return=minimal" };
   if (action === "upsertTask") {
-    await supabaseRequest(accessToken, "tasks?on_conflict=user_id,id", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ user_id: userId, id: payload.id, title: payload.title, due_date: payload.dueDate, due_time: payload.dueTime, priority: payload.priority, completed: payload.completed, updated_at: new Date().toISOString() }) });
+    await supabaseRequest(accessToken, "tasks?on_conflict=user_id,id", { method: "POST", headers: jsonHeaders, body: JSON.stringify({ user_id: userId, id: payload.id, title: payload.title, due_date: payload.dueDate, due_time: payload.dueTime, priority: payload.priority, completed: payload.completed, area: payload.area ?? "Personal", carried_count: payload.carriedCount ?? 0, updated_at: new Date().toISOString() }) });
   } else if (action === "deleteTask") {
     await supabaseRequest(accessToken, `tasks?user_id=eq.${encodeURIComponent(userId)}&id=eq.${encodeURIComponent(String(payload.id))}`, { method: "DELETE", headers: { prefer: "return=minimal" } });
   } else if (action === "upsertEntry") {
@@ -50,7 +51,8 @@ export async function writeSupabaseData(accessToken: string, userId: string, act
 async function readLegacyData(accessToken: string, legacyUrl: string): Promise<DaymarkData> {
   const response = await fetch(legacyUrl, { headers: { authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error("Legacy data request failed");
-  return response.json() as Promise<DaymarkData>;
+  const data = await response.json() as DaymarkData;
+  return { ...data, tasks: data.tasks.map(task => ({ ...task, area: task.area ?? "Personal", carriedCount: task.carriedCount ?? 0 })) };
 }
 
 function hasData(data: DaymarkData) { return Boolean(data.profile || data.tasks.length || data.entries.length); }

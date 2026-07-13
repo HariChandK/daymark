@@ -12,9 +12,14 @@ create table if not exists public.tasks (
   due_time time not null,
   priority text not null check (priority in ('low', 'medium', 'high')),
   completed boolean not null default false,
+  area text not null default 'Personal',
+  carried_count integer not null default 0 check (carried_count >= 0),
   updated_at timestamptz not null default now(),
   primary key (user_id, id)
 );
+
+alter table public.tasks add column if not exists area text not null default 'Personal';
+alter table public.tasks add column if not exists carried_count integer not null default 0;
 
 create table if not exists public.entries (
   id text not null,
