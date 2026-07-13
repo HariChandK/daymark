@@ -15,6 +15,7 @@ import {
 } from "./supabase-auth";
 
 type SignedInUser = {
+  id: string;
   displayName: string;
   email: string;
   fullName: string | null;
@@ -57,6 +58,7 @@ export default function GoogleAuthGate() {
         profile.user_metadata?.full_name ?? profile.user_metadata?.name ?? null;
       setSession(current);
       setUser({
+        id: profile.id,
         displayName: fullName ?? profile.email,
         email: profile.email,
         fullName,

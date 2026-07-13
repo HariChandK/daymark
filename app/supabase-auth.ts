@@ -78,6 +78,7 @@ export async function getSupabaseUser(accessToken: string) {
   });
   if (!response.ok) return null;
   return (await response.json()) as {
+    id: string;
     email?: string;
     user_metadata?: { full_name?: string; name?: string };
   };

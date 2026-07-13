@@ -1,11 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { loadDaymarkData, writeLegacyData, writeSupabaseData, type DataAction, type DataBackend } from "./supabase-data";
 
-type User = { displayName: string; email: string; fullName: string | null };
+type User = { id: string; displayName: string; email: string; fullName: string | null };
 type Task = { id: string; title: string; dueDate: string; dueTime: string; priority: "low" | "medium" | "high"; completed: boolean };
 type Entry = { id: string; entryDate: string; content: string; mood: number; energy: number; updatedAt: string };
 type Data = { tasks: Task[]; entries: Entry[]; profile?: { displayName: string } | null };
+type SaveState = "syncing" | "ready" | "saving" | "saved" | "failed";
+type PendingSave = { action: DataAction; payload: Record<string, unknown> };
 
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const starter: Data = {
@@ -20,6 +23,12 @@ const starter: Data = {
 function uid() { return crypto.randomUUID(); }
 function dateLabel(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
 function fullDate(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
+function downloadFile(name: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url; link.download = name; link.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function DaymarkClient({ user, accessToken, onSignOut }: { user: User; accessToken: string; onSignOut: () => void }) {
   const dataApiUrl = typeof window !== "undefined" && window.location.hostname.endsWith("pages.dev")
@@ -39,27 +48,34 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
   const [journal, setJournal] = useState("");
   const [mood, setMood] = useState(4);
   const [energy, setEnergy] = useState(3);
-  const [status, setStatus] = useState("Syncing your day…");
+  const [saveState, setSaveState] = useState<SaveState>("syncing");
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const [backend, setBackend] = useState<DataBackend>("supabase");
   const [profileName, setProfileName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [onboarding, setOnboarding] = useState<"loading" | "open" | "done">("loading");
 
   useEffect(() => {
-    fetch(dataApiUrl, { headers: { authorization: `Bearer ${accessToken}` } }).then(r => r.ok ? r.json() : Promise.reject()).then((saved: Data) => {
+    loadDaymarkData(accessToken, user.id, dataApiUrl).then(({ data: saved, backend: selectedBackend }) => {
+      setBackend(selectedBackend);
       if (saved.tasks.length || saved.entries.length) setData(saved);
       if (saved.profile?.displayName) { setProfileName(saved.profile.displayName); setOnboarding("done"); }
       else { setNameDraft(user.fullName?.split(" ")[0] ?? ""); setOnboarding("open"); }
       const savedToday = saved.entries.find(entry => entry.entryDate === selectedDate);
-      if (savedToday) { setJournal(savedToday.content); setMood(savedToday.mood); setEnergy(savedToday.energy); }
-      setStatus("Synced");
-    }).catch(() => { setProfileName(user.fullName?.split(" ")[0] ?? user.displayName); setOnboarding("done"); setStatus("Local preview"); });
-  }, [accessToken, dataApiUrl, selectedDate, user.displayName, user.fullName]);
+      const draft = localStorage.getItem(`daymark.draft.${user.email}.${selectedDate}`);
+      if (savedToday) { setJournal(draft ?? savedToday.content); setMood(savedToday.mood); setEnergy(savedToday.energy); }
+      else if (draft) setJournal(draft);
+      setSaveState("ready");
+    }).catch(() => { setProfileName(user.fullName?.split(" ")[0] ?? user.displayName); setOnboarding("done"); setSaveState("failed"); });
+  }, [accessToken, dataApiUrl, selectedDate, user.displayName, user.email, user.fullName, user.id]);
 
   const dayEntry = data.entries.find(entry => entry.entryDate === selectedDate);
 
   function chooseDate(date: string) {
     const entry = data.entries.find(item => item.entryDate === date);
-    setSelectedDate(date); setJournal(entry?.content ?? ""); setMood(entry?.mood ?? 4); setEnergy(entry?.energy ?? 3);
+    const draft = localStorage.getItem(`daymark.draft.${user.email}.${date}`);
+    setSelectedDate(date); setJournal(draft ?? entry?.content ?? ""); setMood(entry?.mood ?? 4); setEnergy(entry?.energy ?? 3);
   }
 
   const dayTasks = useMemo(() => data.tasks.filter(task => task.dueDate === selectedDate).sort((a, b) => a.dueTime.localeCompare(b.dueTime)), [data.tasks, selectedDate]);
@@ -67,13 +83,24 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
   const complete = dayTasks.filter(task => task.completed).length;
   const progress = dayTasks.length ? Math.round((complete / dayTasks.length) * 100) : 0;
 
-  async function persist(action: string, payload: unknown) {
-    setStatus("Saving…");
+  async function persist(action: DataAction, payload: Record<string, unknown>) {
+    setSaveState("saving");
     try {
-      const res = await fetch(dataApiUrl, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ action, payload }) });
-      if (!res.ok) throw new Error();
-      setStatus("Saved");
-    } catch { setStatus("Saved in preview"); }
+      if (backend === "supabase") await writeSupabaseData(accessToken, user.id, action, payload);
+      else await writeLegacyData(accessToken, dataApiUrl, action, payload);
+      setPendingSave(null); setLastSavedAt(new Date()); setSaveState("saved");
+      return true;
+    } catch {
+      setPendingSave({ action, payload }); setSaveState("failed");
+      return false;
+    }
+  }
+
+  function retrySave() { if (pendingSave) void persist(pendingSave.action, pendingSave.payload); }
+
+  function updateJournal(value: string) {
+    setJournal(value);
+    localStorage.setItem(`daymark.draft.${user.email}.${selectedDate}`, value);
   }
 
   function addTask(event: FormEvent) {
@@ -107,33 +134,36 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
     persist("upsertTask", next); setEditingId(null);
   }
 
-  function closeDay() {
+  async function closeDay() {
     const unfinished = dayTasks.filter(task => !task.completed);
     const tomorrow = new Date(new Date(`${selectedDate}T12:00:00`).getTime() + 86400000).toISOString().slice(0, 10);
     const moved = unfinished.map(task => ({ ...task, dueDate: tomorrow }));
     const movedIds = new Set(moved.map(task => task.id));
     setData(current => ({ ...current, tasks: current.tasks.map(task => movedIds.has(task.id) ? moved.find(item => item.id === task.id)! : task) }));
-    moved.forEach(task => persist("upsertTask", task));
     const closure = `Today is saved. ${complete} completed${unfinished.length ? `, ${unfinished.length} carried forward` : ""}. Tomorrow is still open.`;
     const content = journal.trim() ? `${journal.trim()}\n\n${closure}` : closure;
     const entry: Entry = { id: dayEntry?.id ?? uid(), entryDate: selectedDate, content, mood, energy, updatedAt: new Date().toISOString() };
     setJournal(content);
     setData(current => ({ ...current, entries: [...current.entries.filter(item => item.entryDate !== selectedDate), entry] }));
-    persist("upsertEntry", entry);
-    setStatus("Day closed gently");
+    const entrySaved = await persist("upsertEntry", entry);
+    if (!entrySaved) return;
+    for (const task of moved) {
+      if (!(await persist("upsertTask", task))) return;
+    }
+    localStorage.removeItem(`daymark.draft.${user.email}.${selectedDate}`);
   }
 
-  function saveJournal() {
+  async function saveJournal() {
     if (!journal.trim()) return;
     const entry: Entry = { id: dayEntry?.id ?? uid(), entryDate: selectedDate, content: journal.trim(), mood, energy, updatedAt: new Date().toISOString() };
     setData(current => ({ ...current, entries: [...current.entries.filter(item => item.entryDate !== selectedDate), entry] }));
-    persist("upsertEntry", entry);
+    if (await persist("upsertEntry", entry)) localStorage.removeItem(`daymark.draft.${user.email}.${selectedDate}`);
   }
 
   function deleteJournal() {
-    if (!dayEntry) { setJournal(""); return; }
+    if (!dayEntry) { setJournal(""); localStorage.removeItem(`daymark.draft.${user.email}.${selectedDate}`); return; }
     setData(current => ({ ...current, entries: current.entries.filter(item => item.id !== dayEntry.id) }));
-    setJournal(""); persist("deleteEntry", { id: dayEntry.id });
+    setJournal(""); localStorage.removeItem(`daymark.draft.${user.email}.${selectedDate}`); persist("deleteEntry", { id: dayEntry.id });
   }
 
   async function saveName(event: FormEvent) {
@@ -145,6 +175,23 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
   }
 
   const name = profileName || (user.fullName ?? user.displayName).split(" ")[0];
+  const saveLabel = saveState === "saving" ? "Saving" : saveState === "saved" && lastSavedAt ? `Saved securely at ${lastSavedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : saveState === "failed" ? "Save failed" : saveState === "syncing" ? "Syncing your day" : "Ready";
+
+  function exportJson() {
+    downloadFile(`daymark-export-${today}.json`, JSON.stringify({ exportedAt: new Date().toISOString(), profile: data.profile ?? { displayName: name }, tasks: data.tasks, entries: data.entries }, null, 2), "application/json");
+  }
+
+  function exportMarkdown() {
+    const tasksByDate = new Map<string, Task[]>();
+    data.tasks.forEach(task => tasksByDate.set(task.dueDate, [...(tasksByDate.get(task.dueDate) ?? []), task]));
+    const dates = [...new Set([...data.entries.map(entry => entry.entryDate), ...data.tasks.map(task => task.dueDate)])].sort().reverse();
+    const markdown = [`# ${name}'s Daymark`, "", `Exported ${new Date().toLocaleString()}`, "", ...dates.flatMap(date => {
+      const entry = data.entries.find(item => item.entryDate === date);
+      const tasks = tasksByDate.get(date) ?? [];
+      return [`## ${fullDate(date)}`, "", ...(tasks.length ? ["### Intentions", "", ...tasks.map(task => `- [${task.completed ? "x" : " "}] ${task.title} (${task.dueTime}, ${task.priority})`), ""] : []), ...(entry ? ["### Reflection", "", entry.content, "", `Mood: ${entry.mood}/5  `, `Energy: ${entry.energy}/5`, ""] : [])];
+    })].join("\n");
+    downloadFile(`daymark-export-${today}.md`, markdown, "text/markdown");
+  }
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -155,7 +202,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
           <button className={view === "journal" ? "active" : ""} onClick={() => setView("journal")}><span>✎</span> Journal</button>
         </nav>
         <div className="sidebar-note"><span>“</span><p>What became of your day?</p></div>
-        <div className="account"><div className="avatar">{name.charAt(0).toUpperCase()}</div><div><strong>{name}</strong><small>{status}</small></div><button className="sign-out" onClick={onSignOut} aria-label="Sign out">↗</button></div>
+        <div className="account"><div className="avatar">{name.charAt(0).toUpperCase()}</div><div><strong>{name}</strong><small className={saveState === "failed" ? "save-error" : ""}>{saveLabel}</small>{saveState === "failed" && pendingSave && <button className="retry-save" onClick={retrySave}>Retry</button>}</div><button className="sign-out" onClick={onSignOut} aria-label="Sign out">↗</button></div>
       </aside>
 
       <section className="workspace">
@@ -167,7 +214,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
         {view === "timeline" ? (
           <section className="page-card timeline-page"><div className="section-heading"><div><span className="kicker">THE ROAD AHEAD</span><h2>Your timeline</h2></div><span>{upcoming.length} open tasks</span></div>{upcoming.length ? upcoming.map(task => <div className="timeline-row" key={task.id}><time>{dateLabel(task.dueDate)}<small>{task.dueTime}</small></time><span className={`timeline-dot ${task.priority}`}></span><div><strong>{task.title}</strong><small>{task.priority} priority</small></div><button onClick={() => toggleTask(task)}>Mark done</button></div>) : <Empty text="Your road ahead is clear." />}</section>
         ) : view === "journal" ? (
-          <section className="page-card journal-history"><div className="section-heading"><div><span className="kicker">YOUR DAYS</span><h2>Journal</h2></div><span>{data.entries.length} entries</span></div>{data.entries.length ? [...data.entries].sort((a,b) => b.entryDate.localeCompare(a.entryDate)).map(entry => <button className="history-entry" key={entry.id} onClick={() => { chooseDate(entry.entryDate); setView("today"); }}><time>{fullDate(entry.entryDate)}</time><p>{entry.content}</p><span>Mood {entry.mood}/5 · Energy {entry.energy}/5</span></button>) : <Empty text="Your first page is waiting for you." />}</section>
+          <section className="page-card journal-history"><div className="section-heading"><div><span className="kicker">YOUR DAYS</span><h2>Journal</h2></div><div className="export-actions"><button onClick={exportMarkdown}>Export Markdown</button><button onClick={exportJson}>Export JSON</button><span>{data.entries.length} entries</span></div></div>{data.entries.length ? [...data.entries].sort((a,b) => b.entryDate.localeCompare(a.entryDate)).map(entry => <button className="history-entry" key={entry.id} onClick={() => { chooseDate(entry.entryDate); setView("today"); }}><time>{fullDate(entry.entryDate)}</time><p>{entry.content}</p><span>Mood {entry.mood}/5 · Energy {entry.energy}/5</span></button>) : <Empty text="Your first page is waiting for you." />}</section>
         ) : (
           <div className="dashboard-grid">
             <div className="main-column">
@@ -182,7 +229,7 @@ export default function DaymarkClient({ user, accessToken, onSignOut }: { user: 
             </div>
 
             <div className="side-column">
-              <section className="page-card journal-card"><div className="section-heading"><div><span className="kicker">A NOTE TO SELF</span><h2>Before today slips away...</h2></div><button className="delete" onClick={deleteJournal} aria-label="Delete journal entry">{dayEntry ? "Delete" : "Clear"}</button></div><textarea value={journal} onChange={e => setJournal(e.target.value)} placeholder="Leave a few words so you can remember today later." aria-label="Journal entry" /><div className="journal-actions"><span>{journal.length} characters</span><button className="primary" onClick={saveJournal}>Save reflection</button></div></section>
+              <section className="page-card journal-card"><div className="section-heading"><div><span className="kicker">A NOTE TO SELF</span><h2>Before today slips away...</h2></div><button className="delete" onClick={deleteJournal} aria-label="Delete journal entry">{dayEntry ? "Delete" : "Clear"}</button></div><textarea value={journal} onChange={e => updateJournal(e.target.value)} placeholder="Leave a few words so you can remember today later." aria-label="Journal entry" /><div className="journal-actions"><span>{journal.length} characters · {saveLabel}</span><button className="primary" onClick={saveJournal}>Save reflection</button></div>{saveState === "failed" && pendingSave && <button className="retry-save journal-retry" onClick={retrySave}>Save failed. Retry</button>}</section>
               <section className="page-card checkin-card"><span className="kicker">DAILY CHECK-IN</span><h2>How are you feeling today?</h2><label>Mood <span>{["Heavy", "Low", "Steady", "Good", "Bright"][mood-1]}</span></label><div className="scale">{[1,2,3,4,5].map(value => <button key={value} className={mood === value ? "selected" : ""} onClick={() => setMood(value)} aria-label={`Mood ${value} of 5`}>{["☂", "◔", "◐", "☀", "✦"][value-1]}</button>)}</div><label>Energy <span>{energy}/5</span></label><input type="range" min="1" max="5" value={energy} onChange={e => setEnergy(Number(e.target.value))} aria-label="Energy level" /></section>
               <section className="insight"><span>✦</span><div><strong>A small observation</strong><p>{progress >= 75 ? "You may have done more today than you remember." : progress > 0 ? "Where your attention went is part of what today became." : "Not every day needs a lesson. Sometimes it is enough to remember what happened."}</p></div></section>
             </div>
